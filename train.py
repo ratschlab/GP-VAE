@@ -41,7 +41,6 @@ FLAGS = flags.FLAGS
 # flags.DEFINE_float('beta', 0.8, 'Factor to weigh the KL term (similar to beta-VAE)')
 # flags.DEFINE_integer('num_epochs', 20, 'Number of training epochs')
 
-
 # SPRITES config GP-VAE
 # flags.DEFINE_integer('latent_dim', 256, 'Dimensionality of the latent space')
 # flags.DEFINE_list('encoder_sizes', [32, 256, 256], 'Layer sizes of the encoder')
