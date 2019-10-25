@@ -8,7 +8,7 @@ if [ "$random_mechanism" == "mnar" ] ; then
 elif [ "$random_mechanism" == "spatial"] ; then
     wget https://www.dropbox.com/s/ccxlqvu80hk0jfn/hmnist_spatial.npz?dl=1 -O ${DATA_DIR}/hmnist_${random_mechanism}.npz
 elif [ "$random_mechanism" == "random" ] ; then
-    #wget https://www.dropbox.com/s/7iudp0q7fed5map/hmnist_random.npz?dl=1 -O ${DATA_DIR}/hmnist_${random_mechanism}.npz
+    wget https://www.dropbox.com/s/7iudp0q7fed5map/hmnist_random.npz?dl=1 -O ${DATA_DIR}/hmnist_${random_mechanism}.npz
 elif [ "$random_mechanism" == "temporal_neg" ] ; then
     wget https://www.dropbox.com/s/aw2dj0ikd48zf89/hmnist_temporal_neg.npz?dl=1 -O ${DATA_DIR}/hmnist_${random_mechanism}.npz
 elif [ "$random_mechanism" == "temporal_pos" ] ; then
