@@ -23,7 +23,7 @@ Our approach utilizes non-autoregressive Variational Autoencoders with Gaussian 
 1. Clone or download this repo. `cd` yourself to it's root directory.
 2. Grab or build a working python enviromnent. [Anaconda](https://www.anaconda.com/) works fine.
 3. Install dependencies, using `pip install -r requirements.txt`
-4. Download data: 'bash data/load_{hmnist, sprites, physionet}.sh'.
+4. Download data: `bash data/load_{hmnist, sprites, physionet}.sh`.
 5. Run command `CUDA_VISIBLE_DEVICES=* python train.py --model_type {vae, hi-vae, gp-vae} --data_type {hmnist, sprites, physionet} --exp_name <your_name> ...`
    
    To see all available flags run: `python train.py --help`
