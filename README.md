@@ -3,7 +3,7 @@
 Code for [paper](http://arxiv.org/abs/1907.04155)
 
 ## Overview
-Our approach utilizes non-autoregressive Variational Autoencoders with Gaussian Process prior for time series imputation. 
+Our approach utilizes Variational Autoencoders with Gaussian Process prior for time series imputation. 
 
 * The inference model takes time series with missingness and predicts variational parameters for multivariate Gaussian variational distribution.
 
@@ -16,7 +16,7 @@ Our approach utilizes non-autoregressive Variational Autoencoders with Gaussian 
 ## Dependencies
 
 * Python >= 3.6
-* TensorFlow = 1.14
+* TensorFlow = 1.15
 * Some more packages: see `requirements.txt`
 
 ## Run

@@ -14,7 +14,7 @@ import tensorflow as tf
 # Encoders
 
 class DiagonalEncoder(tf.keras.Model):
-    def __init__(self, z_size, hidden_sizes=(64, 64)):
+    def __init__(self, z_size, hidden_sizes=(64, 64), **kwargs):
         """ Encoder with factorized Normal posterior over temporal dimension
             Used by disjoint VAE and HI-VAE with Standard Normal prior
             :param z_size: latent space dimensionality
@@ -33,7 +33,7 @@ class DiagonalEncoder(tf.keras.Model):
 
 
 class JointEncoder(tf.keras.Model):
-    def __init__(self, z_size, hidden_sizes=(64, 64), window_size=3, transpose=False):
+    def __init__(self, z_size, hidden_sizes=(64, 64), window_size=3, transpose=False, **kwargs):
         """ Encoder with 1d-convolutional network and factorized Normal posterior
             Used by joint VAE and HI-VAE with Standard Normal prior or GP-VAE with factorized Normal posterior
             :param z_size: latent space dimensionality
@@ -62,17 +62,21 @@ class JointEncoder(tf.keras.Model):
 
 
 class BandedJointEncoder(tf.keras.Model):
-    def __init__(self, z_size, hidden_sizes=(64, 64), window_size=3):
+    def __init__(self, z_size, hidden_sizes=(64, 64), window_size=3, data_type=None, **kwargs):
         """ Encoder with 1d-convolutional network and multivariate Normal posterior
             Used by GP-VAE with proposed banded covariance matrix
             :param z_size: latent space dimensionality
             :param hidden_sizes: tuple of hidden layer sizes.
                                  The tuple length sets the number of hidden layers.
             :param window_size: kernel size for Conv1D layer
+            :param data_type: needed for some data specific modifications, e.g:
+                tf.nn.softplus is a more common and correct choice, however
+                tf.nn.sigmoid provides more stable performance on Physionet dataset
         """
         super(BandedJointEncoder, self).__init__()
         self.z_size = int(z_size)
         self.net = make_cnn(3*z_size, hidden_sizes, window_size)
+        self.data_type = data_type
 
     def __call__(self, x):
         mapped = self.net(x)
@@ -87,8 +91,8 @@ class BandedJointEncoder(tf.keras.Model):
         mapped_mean = mapped_transposed[:, :self.z_size]
         mapped_covar = mapped_transposed[:, self.z_size:]
 
-        # Hard coded. Sigmoid produces more stable results on Physionet data.
-        if time_length == 48:
+        # tf.nn.sigmoid provides more stable performance on Physionet dataset
+        if self.data_type == 'physionet':
             mapped_covar = tf.nn.sigmoid(mapped_covar)
         else:
             mapped_covar = tf.nn.softplus(mapped_covar)
@@ -176,7 +180,7 @@ class VAE(tf.keras.Model):
     def __init__(self, latent_dim, data_dim, time_length,
                  encoder_sizes=(64, 64), encoder=DiagonalEncoder,
                  decoder_sizes=(64, 64), decoder=BernoulliDecoder,
-                 image_preprocessor=None, window_size=3., beta=1.0, M=1, K=1):
+                 image_preprocessor=None, beta=1.0, M=1, K=1, **kwargs):
         """ Basic Variational Autoencoder with Standard Normal prior
             :param latent_dim: latent space dimensionality
             :param data_dim: original data dimensionality
@@ -188,7 +192,6 @@ class VAE(tf.keras.Model):
             :param decoder: decoder model class {Bernoulli, Gaussian}Decoder
             
             :param image_preprocessor: 2d-convolutional network used for image data preprocessing
-            :param window_size: kernel size for 1d-convolution in {Joint, BandedJoint}Encoder models
             :param beta: tradeoff coefficient between reconstruction and KL terms in ELBO
             :param M: number of Monte Carlo samples for ELBO estimation
             :param K: number of importance weights for IWAE model (see: https://arxiv.org/abs/1509.00519)
@@ -198,13 +201,7 @@ class VAE(tf.keras.Model):
         self.data_dim = data_dim
         self.time_length = time_length
 
-        if issubclass(encoder, DiagonalEncoder):
-            self.encoder = encoder(latent_dim, encoder_sizes)
-        elif issubclass(encoder, (JointEncoder, BandedJointEncoder)):
-            self.encoder = encoder(latent_dim, encoder_sizes, window_size=window_size)
-        else:
-            raise NotImplementedError("Such encoder class is not implemented")
-
+        self.encoder = encoder(latent_dim, encoder_sizes, **kwargs)
         self.decoder = decoder(data_dim, decoder_sizes)
         self.preprocessor = image_preprocessor
 

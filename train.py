@@ -223,7 +223,7 @@ def main(argv):
                        kernel=FLAGS.kernel, sigma=FLAGS.sigma,
                        length_scale=FLAGS.length_scale, kernel_scales = FLAGS.kernel_scales,
                        image_preprocessor=image_preprocessor, window_size=FLAGS.window_size,
-                       beta=FLAGS.beta, M=FLAGS.M, K=FLAGS.K)
+                       beta=FLAGS.beta, M=FLAGS.M, K=FLAGS.K, data_type=FLAGS.data_type)
     else:
         raise ValueError("Model type must be one of ['vae', 'hi-vae', 'gp-vae']")
 
