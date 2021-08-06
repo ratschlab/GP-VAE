@@ -52,7 +52,7 @@ class JointEncoder(tf.keras.Model):
         if self.transpose:
             num_dim = len(x.shape.as_list())
             perm = list(range(num_dim - 2)) + [num_dim - 1, num_dim - 2]
-            mapped = tf.transpose(mapped, perm=perm)
+            mapped = tf.transpose(a=mapped, perm=perm)
             return tfd.MultivariateNormalDiag(
                     loc=mapped[..., :self.z_size, :],
                     scale_diag=tf.nn.softplus(mapped[..., self.z_size:, :]))
@@ -87,7 +87,7 @@ class BandedJointEncoder(tf.keras.Model):
         # Obtain mean and precision matrix components
         num_dim = len(mapped.shape.as_list())
         perm = list(range(num_dim - 2)) + [num_dim - 1, num_dim - 2]
-        mapped_transposed = tf.transpose(mapped, perm=perm)
+        mapped_transposed = tf.transpose(a=mapped, perm=perm)
         mapped_mean = mapped_transposed[:, :self.z_size]
         mapped_covar = mapped_transposed[:, self.z_size:]
 
@@ -112,15 +112,15 @@ class BandedJointEncoder(tf.keras.Model):
             mapped_values = tf.reshape(mapped_reshaped[:, :, :-1], [-1])
             prec_sparse = tf.sparse.SparseTensor(indices=idxs_all, values=mapped_values, dense_shape=dense_shape)
             prec_sparse = tf.sparse.reorder(prec_sparse)
-            prec_tril = tf.sparse_add(tf.zeros(prec_sparse.dense_shape, dtype=tf.float32), prec_sparse)
+            prec_tril = tf.sparse.add(a=tf.zeros(prec_sparse.dense_shape, dtype=tf.float32), b=prec_sparse)
             eye = tf.eye(num_rows=prec_tril.shape.as_list()[-1], batch_shape=prec_tril.shape.as_list()[:-2])
             prec_tril = prec_tril + eye
             cov_tril = tf.linalg.triangular_solve(matrix=prec_tril, rhs=eye, lower=False)
-            cov_tril = tf.where(tf.math.is_finite(cov_tril), cov_tril, tf.zeros_like(cov_tril))
+            cov_tril = tf.compat.v1.where(tf.math.is_finite(cov_tril), cov_tril, tf.zeros_like(cov_tril))
 
         num_dim = len(cov_tril.shape)
         perm = list(range(num_dim - 2)) + [num_dim - 1, num_dim - 2]
-        cov_tril_lower = tf.transpose(cov_tril, perm=perm)
+        cov_tril_lower = tf.transpose(a=cov_tril, perm=perm)
         z_dist = tfd.MultivariateNormalTriL(loc=mapped_mean, scale_tril=cov_tril_lower)
         return z_dist
 
@@ -152,7 +152,7 @@ class GaussianDecoder(Decoder):
     """ Decoder with Gaussian output distribution (used for SPRITES and Physionet) """
     def __call__(self, x):
         mean = self.net(x)
-        var = tf.ones(tf.shape(mean), dtype=tf.float32)
+        var = tf.ones(tf.shape(input=mean), dtype=tf.float32)
         return tfd.Normal(loc=mean, scale=var)
 
 
@@ -228,7 +228,7 @@ class VAE(tf.keras.Model):
 
     def generate(self, noise=None, num_samples=1):
         if noise is None:
-            noise = tf.random_normal(shape=(num_samples, self.latent_dim))
+            noise = tf.random.normal(shape=(num_samples, self.latent_dim))
         return self.decode(noise)
     
     def _get_prior(self):
@@ -245,11 +245,11 @@ class VAE(tf.keras.Model):
         z_sample = self.encode(x).sample()
         x_hat_dist = self.decode(z_sample)
         nll = -x_hat_dist.log_prob(y)  # shape=(BS, TL, D)
-        nll = tf.where(tf.math.is_finite(nll), nll, tf.zeros_like(nll))
+        nll = tf.compat.v1.where(tf.math.is_finite(nll), nll, tf.zeros_like(nll))
         if m_mask is not None:
             m_mask = tf.cast(m_mask, tf.bool)
-            nll = tf.where(m_mask, nll, tf.zeros_like(nll))  # !!! inverse mask, set zeros for observed
-        return tf.reduce_sum(nll)
+            nll = tf.compat.v1.where(m_mask, nll, tf.zeros_like(nll))  # !!! inverse mask, set zeros for observed
+        return tf.reduce_sum(input_tensor=nll)
 
     def compute_mse(self, x, y=None, m_mask=None, binary=False):
         # Used only for evaluation
@@ -263,8 +263,8 @@ class VAE(tf.keras.Model):
         mse = tf.math.squared_difference(x_hat_mean, y)
         if m_mask is not None:
             m_mask = tf.cast(m_mask, tf.bool)
-            mse = tf.where(m_mask, mse, tf.zeros_like(mse))  # !!! inverse mask, set zeros for observed
-        return tf.reduce_sum(mse)
+            mse = tf.compat.v1.where(m_mask, mse, tf.zeros_like(mse))  # !!! inverse mask, set zeros for observed
+        return tf.reduce_sum(input_tensor=mse)
 
     def _compute_loss(self, x, m_mask=None, return_parts=False):
         assert len(x.shape) == 3, "Input should have shape: [batch_size, time_length, data_dim]"
@@ -282,33 +282,33 @@ class VAE(tf.keras.Model):
         px_z = self.decode(z)
 
         nll = -px_z.log_prob(x)  # shape=(M*K*BS, TL, D)
-        nll = tf.where(tf.math.is_finite(nll), nll, tf.zeros_like(nll))
+        nll = tf.compat.v1.where(tf.math.is_finite(nll), nll, tf.zeros_like(nll))
         if m_mask is not None:
-            nll = tf.where(m_mask, tf.zeros_like(nll), nll)  # if not HI-VAE, m_mask is always zeros
-        nll = tf.reduce_sum(nll, [1, 2])  # shape=(M*K*BS)
+            nll = tf.compat.v1.where(m_mask, tf.zeros_like(nll), nll)  # if not HI-VAE, m_mask is always zeros
+        nll = tf.reduce_sum(input_tensor=nll, axis=[1, 2])  # shape=(M*K*BS)
 
         if self.K > 1:
             kl = qz_x.log_prob(z) - pz.log_prob(z)  # shape=(M*K*BS, TL or d)
-            kl = tf.where(tf.is_finite(kl), kl, tf.zeros_like(kl))
-            kl = tf.reduce_sum(kl, 1)  # shape=(M*K*BS)
+            kl = tf.compat.v1.where(tf.math.is_finite(kl), kl, tf.zeros_like(kl))
+            kl = tf.reduce_sum(input_tensor=kl, axis=1)  # shape=(M*K*BS)
 
             weights = -nll - kl  # shape=(M*K*BS)
             weights = tf.reshape(weights, [self.M, self.K, -1])  # shape=(M, K, BS)
 
             elbo = reduce_logmeanexp(weights, axis=1)  # shape=(M, 1, BS)
-            elbo = tf.reduce_mean(elbo)  # scalar
+            elbo = tf.reduce_mean(input_tensor=elbo)  # scalar
         else:
             # if K==1, compute KL analytically
             kl = self.kl_divergence(qz_x, pz)  # shape=(M*K*BS, TL or d)
-            kl = tf.where(tf.math.is_finite(kl), kl, tf.zeros_like(kl))
-            kl = tf.reduce_sum(kl, 1)  # shape=(M*K*BS)
+            kl = tf.compat.v1.where(tf.math.is_finite(kl), kl, tf.zeros_like(kl))
+            kl = tf.reduce_sum(input_tensor=kl, axis=1)  # shape=(M*K*BS)
 
             elbo = -nll - self.beta * kl  # shape=(M*K*BS) K=1
-            elbo = tf.reduce_mean(elbo)  # scalar
+            elbo = tf.reduce_mean(input_tensor=elbo)  # scalar
 
         if return_parts:
-            nll = tf.reduce_mean(nll)  # scalar
-            kl = tf.reduce_mean(kl)  # scalar
+            nll = tf.reduce_mean(input_tensor=nll)  # scalar
+            kl = tf.reduce_mean(input_tensor=kl)  # scalar
             return -elbo, nll, kl
         else:
             return -elbo
@@ -333,7 +333,7 @@ class HI_VAE(VAE):
 
 
 class GP_VAE(HI_VAE):
-    def __init__(self, *args, kernel="cauchy", sigma=1., length_scale=1.0, kernel_scales=1, **kwargs):
+    def __init__(self, *args,  **kwargs):
         """ Proposed GP-VAE model with Gaussian Process prior
             :param kernel: Gaussial Process kernel ["cauchy", "diffusion", "rbf", "matern"]
             :param sigma: scale parameter for a kernel function
@@ -341,10 +341,10 @@ class GP_VAE(HI_VAE):
             :param kernel_scales: number of different length scales over latent space dimensions
         """
         super(GP_VAE, self).__init__(*args, **kwargs)
-        self.kernel = kernel
-        self.sigma = sigma
-        self.length_scale = length_scale
-        self.kernel_scales = kernel_scales
+        self.kernel = kwargs['kernel']
+        self.sigma = kwargs['sigma']
+        self.length_scale = kwargs['length_scale']
+        self.kernel_scales = kwargs['kernel_scales']
 
         if isinstance(self.encoder, JointEncoder):
             self.encoder.transpose = True
@@ -358,7 +358,7 @@ class GP_VAE(HI_VAE):
         num_dim = len(z.shape)
         assert num_dim > 2
         perm = list(range(num_dim - 2)) + [num_dim - 1, num_dim - 2]
-        return self.decoder(tf.transpose(z, perm=perm))
+        return self.decoder(tf.transpose(a=z, perm=perm))
 
     def _get_prior(self):
         if self.prior is None:
@@ -401,7 +401,7 @@ class GP_VAE(HI_VAE):
 
         def squared_frobenius_norm(x):
             """Helper to make KL calculation slightly more readable."""
-            return tf.reduce_sum(tf.square(x), axis=[-2, -1])
+            return tf.reduce_sum(input_tensor=tf.square(x), axis=[-2, -1])
 
         def is_diagonal(x):
             """Helper to identify if `LinearOperator` has only a diagonal component."""
@@ -415,7 +415,7 @@ class GP_VAE(HI_VAE):
         else:
             if self.pz_scale_inv is None:
                 self.pz_scale_inv = tf.linalg.inv(b.scale.to_dense())
-                self.pz_scale_inv = tf.where(tf.math.is_finite(self.pz_scale_inv),
+                self.pz_scale_inv = tf.compat.v1.where(tf.math.is_finite(self.pz_scale_inv),
                                              self.pz_scale_inv, tf.zeros_like(self.pz_scale_inv))
 
             if self.pz_scale_log_abs_determinant is None:
@@ -427,7 +427,8 @@ class GP_VAE(HI_VAE):
             else:
                 _b_scale_inv = tf.tile(self.pz_scale_inv, [a_shape[0]] + [1] * (len(a_shape) - 1))
 
-            b_inv_a = _b_scale_inv @ a.scale.to_dense()
+            # b_inv_a = _b_scale_inv @ a.scale.to_dense()
+            b_inv_a = tf.matmul(_b_scale_inv,a.scale.to_dense())
 
         # ~10x times faster on CPU then on GPU
         with tf.device('/cpu:0'):

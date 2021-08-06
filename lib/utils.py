@@ -16,9 +16,9 @@ def reduce_logmeanexp(x, axis, eps=1e-5):
     Returns:
         log_mean_exp: A `Tensor` representing `log(Avg{exp(x): x})`.
     """
-    x_max = tf.reduce_max(x, axis=axis, keepdims=True)
-    return tf.log(tf.reduce_mean(
-            tf.exp(x - x_max), axis=axis, keepdims=True) + eps) + x_max
+    x_max = tf.reduce_max(input_tensor=x, axis=axis, keepdims=True)
+    return tf.math.log(tf.reduce_mean(
+            input_tensor=tf.exp(x - x_max), axis=axis, keepdims=True) + eps) + x_max
 
 
 def multiply_tfd_gaussians(gaussians):
@@ -39,8 +39,8 @@ def multiply_inv_gaussians(mus, lambdas):
     batch_size = int(mus[0].shape[0])
     d_z = int(lambdas[0].shape[-1])
     identity_matrix = tf.reshape(tf.tile(tf.eye(d_z), [batch_size,1]), [-1,d_z,d_z])
-    lambda_new = tf.reduce_sum(lambdas, axis=0) + identity_matrix
-    mus_summed = tf.reduce_sum([tf.einsum("bij, bj -> bi", lamb, mu)
+    lambda_new = tf.reduce_sum(input_tensor=lambdas, axis=0) + identity_matrix
+    mus_summed = tf.reduce_sum(input_tensor=[tf.einsum("bij, bj -> bi", lamb, mu)
                                 for lamb, mu in zip(lambdas, mus)], axis=0)
     sigma_new = tf.linalg.inv(lambda_new)
     mu_new = tf.einsum("bij, bj -> bi", sigma_new, mus_summed)
@@ -57,8 +57,8 @@ def multiply_inv_gaussians_batch(mus, lambdas):
     batch_size = mus[0].shape.as_list()[:-1]
     d_z = lambdas[0].shape.as_list()[-1]
     identity_matrix = tf.tile(tf.expand_dims(tf.expand_dims(tf.eye(d_z), axis=0), axis=0), batch_size+[1,1])
-    lambda_new = tf.reduce_sum(lambdas, axis=0) + identity_matrix
-    mus_summed = tf.reduce_sum([tf.einsum("bcij, bcj -> bci", lamb, mu)
+    lambda_new = tf.reduce_sum(input_tensor=lambdas, axis=0) + identity_matrix
+    mus_summed = tf.reduce_sum(input_tensor=[tf.einsum("bcij, bcj -> bci", lamb, mu)
                                 for lamb, mu in zip(lambdas, mus)], axis=0)
     sigma_new = tf.linalg.inv(lambda_new)
     mu_new = tf.einsum("bcij, bcj -> bci", sigma_new, mus_summed)

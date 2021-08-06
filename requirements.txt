@@ -1,8 +1,0 @@
-absl-py==0.7.0
-numpy==1.16.4
-scipy==1.2.0
-tensorflow==1.15.0
-tensorflow-gpu==1.15.0
-tensorflow_probability==0.7.0
-matplotlib
-scikit-learn
