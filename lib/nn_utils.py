@@ -1,8 +1,20 @@
 import tensorflow as tf
+from tensorflow.python.keras.regularizers import l2, l1
 
+from motion_utils.debug_layer import MyPrintShapeLayer
+from motion_utils.mixer_mlp import MixerLayer
 
 ''' NN utils '''
 
+
+def make_mixer_nn(output_size, hidden_sizes):
+    layers = [MixerLayer(h)
+              for h in hidden_sizes]
+
+    layers.append(MyPrintShapeLayer())
+    layers.append(tf.keras.layers.Reshape([8,8,2640], dtype=tf.float32))
+    layers.append(tf.keras.layers.Dense(output_size, dtype=tf.float32))
+    return tf.keras.Sequential(layers)
 
 def make_nn(output_size, hidden_sizes):
     """ Creates fully connected neural network
@@ -10,7 +22,7 @@ def make_nn(output_size, hidden_sizes):
             :param hidden_sizes: tuple of hidden layer sizes.
                                  The tuple length sets the number of hidden layers.
     """
-    layers = [tf.keras.layers.Dense(h, activation=tf.nn.relu, dtype=tf.float32)
+    layers = [tf.keras.layers.Dense(h, activation=tf.nn.leaky_relu, dtype=tf.float32)
               for h in hidden_sizes]
     layers.append(tf.keras.layers.Dense(output_size, dtype=tf.float32))
     return tf.keras.Sequential(layers)

@@ -14,7 +14,7 @@ import tensorflow as tf
 # Encoders
 
 class DiagonalEncoder(tf.keras.Model):
-    def __init__(self, z_size, hidden_sizes=(64, 64), **kwargs):
+    def __init__(self, z_size, hidden_sizes=(64, 64), use_mixer=False, **kwargs):
         """ Encoder with factorized Normal posterior over temporal dimension
             Used by disjoint VAE and HI-VAE with Standard Normal prior
             :param z_size: latent space dimensionality
@@ -23,7 +23,10 @@ class DiagonalEncoder(tf.keras.Model):
         """
         super(DiagonalEncoder, self).__init__()
         self.z_size = int(z_size)
-        self.net = make_nn(2*z_size, hidden_sizes)
+        if use_mixer:
+            self.net = make_mixer_nn(2*z_size, hidden_sizes)
+        else:
+            self.net = make_nn(2 * z_size, hidden_sizes)
 
     def __call__(self, x):
         mapped = self.net(x)
@@ -62,7 +65,7 @@ class JointEncoder(tf.keras.Model):
 
 
 class BandedJointEncoder(tf.keras.Model):
-    def __init__(self, z_size, hidden_sizes=(64, 64), window_size=3, data_type=None, **kwargs):
+    def __init__(self, z_size, hidden_sizes=(64, 64), window_size=3, data_type=None,use_mixer=False, **kwargs):
         """ Encoder with 1d-convolutional network and multivariate Normal posterior
             Used by GP-VAE with proposed banded covariance matrix
             :param z_size: latent space dimensionality
@@ -75,11 +78,16 @@ class BandedJointEncoder(tf.keras.Model):
         """
         super(BandedJointEncoder, self).__init__()
         self.z_size = int(z_size)
-        self.net = make_cnn(3*z_size, hidden_sizes, window_size)
+        if use_mixer:
+            self.net = make_mixer_nn(3 * z_size, hidden_sizes)
+        else:
+            self.net = make_cnn(3*z_size, hidden_sizes, window_size)
+
         self.data_type = data_type
 
     def __call__(self, x):
-        mapped = self.net(x)
+
+        mapped = self.net(tf.keras.utils.normalize(x))
 
         batch_size = mapped.shape.as_list()[0]
         time_length = mapped.shape.as_list()[1]
@@ -128,14 +136,17 @@ class BandedJointEncoder(tf.keras.Model):
 # Decoders
 
 class Decoder(tf.keras.Model):
-    def __init__(self, output_size, hidden_sizes=(64, 64)):
+    def __init__(self, output_size, hidden_sizes=(64, 64),use_mixer=False):
         """ Decoder parent class with no specified output distribution
             :param output_size: output dimensionality
             :param hidden_sizes: tuple of hidden layer sizes.
                                  The tuple length sets the number of hidden layers.
         """
         super(Decoder, self).__init__()
-        self.net = make_nn(output_size, hidden_sizes)
+        if use_mixer:
+            self.net = make_mixer_nn(output_size, hidden_sizes)
+        else:
+            self.net = make_nn(output_size, hidden_sizes)
 
     def __call__(self, x):
         pass
@@ -180,7 +191,7 @@ class VAE(tf.keras.Model):
     def __init__(self, latent_dim, data_dim, time_length,
                  encoder_sizes=(64, 64), encoder=DiagonalEncoder,
                  decoder_sizes=(64, 64), decoder=BernoulliDecoder,
-                 image_preprocessor=None, beta=1.0, M=1, K=1, **kwargs):
+                 image_preprocessor=None, beta=1.0, M=1, K=1, use_mixer=False, **kwargs):
         """ Basic Variational Autoencoder with Standard Normal prior
             :param latent_dim: latent space dimensionality
             :param data_dim: original data dimensionality
@@ -201,8 +212,8 @@ class VAE(tf.keras.Model):
         self.data_dim = data_dim
         self.time_length = time_length
 
-        self.encoder = encoder(latent_dim, encoder_sizes, **kwargs)
-        self.decoder = decoder(data_dim, decoder_sizes)
+        self.encoder = encoder(latent_dim, encoder_sizes, use_mixer=use_mixer, **kwargs)
+        self.decoder = decoder(data_dim, decoder_sizes, use_mixer=use_mixer)
         self.preprocessor = image_preprocessor
 
         self.beta = beta
@@ -267,7 +278,7 @@ class VAE(tf.keras.Model):
         return tf.reduce_sum(input_tensor=mse)
 
     def _compute_loss(self, x, m_mask=None, return_parts=False):
-        assert len(x.shape) == 3, "Input should have shape: [batch_size, time_length, data_dim]"
+        assert len(x.shape) == 3, f"Input should have shape: [batch_size, time_length, data_dim] but got {x.shape}"
         x = tf.identity(x)  # in case x is not a Tensor already...
         x = tf.tile(x, [self.M * self.K, 1, 1])  # shape=(M*K*BS, TL, D)
 
@@ -277,15 +288,23 @@ class VAE(tf.keras.Model):
             m_mask = tf.cast(m_mask, tf.bool)
 
         pz = self._get_prior()
-        qz_x = self.encode(x)
+        qz_x = self.encode(tf.reshape(x,(8,330,8)))
         z = qz_x.sample()
         px_z = self.decode(z)
 
+        x_hat = px_z.sample()
+        mse_loss = tf.keras.metrics.mean_squared_error(x,x_hat)
+        # print(px_z)
+        mse_loss = tf.reduce_sum(input_tensor=mse_loss)
+
         nll = -px_z.log_prob(x)  # shape=(M*K*BS, TL, D)
+
         nll = tf.compat.v1.where(tf.math.is_finite(nll), nll, tf.zeros_like(nll))
         if m_mask is not None:
             nll = tf.compat.v1.where(m_mask, tf.zeros_like(nll), nll)  # if not HI-VAE, m_mask is always zeros
         nll = tf.reduce_sum(input_tensor=nll, axis=[1, 2])  # shape=(M*K*BS)
+
+
 
         if self.K > 1:
             kl = qz_x.log_prob(z) - pz.log_prob(z)  # shape=(M*K*BS, TL or d)
@@ -303,13 +322,14 @@ class VAE(tf.keras.Model):
             kl = tf.compat.v1.where(tf.math.is_finite(kl), kl, tf.zeros_like(kl))
             kl = tf.reduce_sum(input_tensor=kl, axis=1)  # shape=(M*K*BS)
 
-            elbo = -nll - self.beta * kl  # shape=(M*K*BS) K=1
+            elbo = -nll - self.beta * kl #-mse_loss # shape=(M*K*BS) K=1
+            # print("MSE_loss= ",mse_loss)
             elbo = tf.reduce_mean(input_tensor=elbo)  # scalar
 
         if return_parts:
             nll = tf.reduce_mean(input_tensor=nll)  # scalar
             kl = tf.reduce_mean(input_tensor=kl)  # scalar
-            return -elbo, nll, kl
+            return -elbo, nll, kl,mse_loss
         else:
             return -elbo
 
@@ -321,8 +341,8 @@ class VAE(tf.keras.Model):
         return tfd.kl_divergence(a, b)
 
     def get_trainable_vars(self):
-        self.compute_loss(tf.random.normal(shape=(1, self.time_length, self.data_dim), dtype=tf.float32),
-                          tf.zeros(shape=(1, self.time_length, self.data_dim), dtype=tf.float32))
+        self.compute_loss(tf.random.normal(shape=(8, self.time_length, self.data_dim), dtype=tf.float32),
+                          tf.zeros(shape=(8, self.time_length, self.data_dim), dtype=tf.float32))
         return self.trainable_variables
 
 

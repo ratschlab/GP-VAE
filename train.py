@@ -10,6 +10,9 @@ import time
 from datetime import datetime
 import numpy as np
 import matplotlib
+
+from motion_utils.lr_schedule import LRSchedule, get_lr
+
 matplotlib.use("Agg")
 from matplotlib import pyplot as plt
 import tensorflow as tf
@@ -24,7 +27,9 @@ warnings.simplefilter(action='ignore', category=FutureWarning)
 
 from absl import app
 from absl import flags
+from tensorflow.python.ops.numpy_ops import np_config
 
+np_config.enable_numpy_behavior()
 sys.path.append("..")
 from lib.models import *
 
@@ -69,20 +74,25 @@ flags.DEFINE_integer('print_interval', 0, 'Interval for printing the loss and sa
 flags.DEFINE_string('exp_name', "debug", 'Name of the experiment')
 flags.DEFINE_string('basedir', "models", 'Directory where the models should be stored')
 flags.DEFINE_string('data_dir', "", 'Directory from where the data should be read in')
-flags.DEFINE_enum('data_type', 'hmnist', ['hmnist', 'physionet', 'sprites'], 'Type of data to be trained on')
+flags.DEFINE_enum('data_type', 'hmnist', ['hmnist', 'physionet', 'sprites','motion'], 'Type of data to be trained on')
 flags.DEFINE_integer('seed', 1337, 'Seed for the random number generator')
 flags.DEFINE_enum('model_type', 'gp-vae', ['vae', 'hi-vae', 'gp-vae'], 'Type of model to be trained')
 flags.DEFINE_integer('cnn_kernel_size', 3, 'Kernel size for the CNN preprocessor')
 flags.DEFINE_list('cnn_sizes', [256], 'Number of filters for the layers of the CNN preprocessor')
 flags.DEFINE_boolean('testing', False, 'Use the actual test set for testing')
 flags.DEFINE_boolean('banded_covar', False, 'Use a banded covariance matrix instead of a diagonal one for the output of the inference network: Ignored if model_type is not gp-vae')
-flags.DEFINE_integer('batch_size', 64, 'Batch size for training')
+flags.DEFINE_integer('batch_size', 8, 'Batch size for training')
 
 flags.DEFINE_integer('M', 1, 'Number of samples for ELBO estimation')
 flags.DEFINE_integer('K', 1, 'Number of importance sampling weights')
 
+
 flags.DEFINE_enum('kernel', 'cauchy', ['rbf', 'diffusion', 'matern', 'cauchy'], 'Kernel to be used for the GP prior: Ignored if model_type is not (m)gp-vae')
-flags.DEFINE_integer('kernel_scales', 1, 'Number of different length scales sigma for the GP prior: Ignored if model_type is not gp-vae')
+flags.DEFINE_integer('kernel_scales', 10, 'Number of different length scales sigma for the GP prior: Ignored if model_type is not gp-vae')
+
+# motion
+flags.DEFINE_integer('Time', 10, 'length scales sigma for the GP prior: Ignored if model_type is not gp-vae')
+flags.DEFINE_boolean('use_mixer', False, 'whether use mixer mlps instead of FF layers')
 
 
 def main(argv):
@@ -135,8 +145,18 @@ def main(argv):
         data_dim = 12288
         time_length = 8
         decoder = GaussianDecoder
-        img_shape = (64, 64, 3)
+        img_shape = (64, 64, 3) #--> 40,40,100 --> 25,25,256
         val_split = 8000
+    elif FLAGS.data_type == "motion":
+        if FLAGS.data_dir == "":
+            # FLAGS.data_dir = "data/motion/motion.npz"
+            FLAGS.data_dir =  "data/motion/motion_ds_9_1000_only.npz"
+        data_dim = 330 * FLAGS.Time
+        time_length = FLAGS.Time
+        decoder = GaussianDecoder
+        img_shape = (8,330) # --> t/4,65*3,100 --> t/8,30*3,256
+        val_split = 8000
+
     else:
         raise ValueError("Data type must be one of ['hmnist', 'physionet', 'sprites']")
 
@@ -146,9 +166,16 @@ def main(argv):
     #############
 
     data = np.load(FLAGS.data_dir)
-    x_train_full = data['x_train_full']
-    x_train_miss = data['x_train_miss']
-    m_train_miss = data['m_train_miss']
+    if FLAGS.data_type in ['motion']:
+        x_train_full = data['x_full'].reshape(-1,*img_shape)
+        x_train_miss = data['x_miss'].reshape(-1,*img_shape)
+        m_train_miss = data['m_miss'].reshape(-1,*img_shape)
+    else:
+        x_train_full = data['x_train_full']
+        x_train_miss = data['x_train_miss']
+        m_train_miss = data['m_train_miss']
+        # y_train = x_train_full
+
     if FLAGS.data_type in ['hmnist', 'physionet']:
         y_train = data['y_train']
 
@@ -181,19 +208,26 @@ def main(argv):
         m_val_miss = data["m_val_miss"]
         m_val_artificial = data["m_val_artificial"]
         y_val = data["y_val"]
+    elif FLAGS.data_type == 'motion':
+        x_val_full = data['x_full']
+        x_val_miss = data['x_miss']
+        m_val_miss = data['m_miss']
     else:
         raise ValueError("Data type must be one of ['hmnist', 'physionet', 'sprites']")
-
-    tf_x_train_miss = tf.data.Dataset.from_tensor_slices((x_train_miss, m_train_miss))\
+    if FLAGS.data_type in ['motion']:
+        x_val_full = data['x_full'].reshape(-1,*img_shape)
+        x_val_miss = data['x_miss'].reshape(-1,*img_shape)
+        m_val_miss = data['m_miss'].reshape(-1,*img_shape)
+    tf_x_train_miss = tf.data.Dataset.from_tensor_slices((x_train_miss, m_train_miss,x_train_full))\
                                      .shuffle(len(x_train_miss)).batch(FLAGS.batch_size).repeat()
-    tf_x_val_miss = tf.data.Dataset.from_tensor_slices((x_val_miss, m_val_miss)).batch(FLAGS.batch_size).repeat()
+    tf_x_val_miss = tf.data.Dataset.from_tensor_slices((x_val_miss, m_val_miss, x_val_full)).batch(FLAGS.batch_size).repeat()
     tf_x_val_miss = tf.compat.v1.data.make_one_shot_iterator(tf_x_val_miss)
 
     # Build Conv2D preprocessor for image data
     if FLAGS.data_type in ['hmnist', 'sprites']:
         print("Using CNN preprocessor")
         image_preprocessor = ImagePreprocessor(img_shape, FLAGS.cnn_sizes, FLAGS.cnn_kernel_size)
-    elif FLAGS.data_type == 'physionet':
+    elif FLAGS.data_type in ['physionet', 'motion']:
         image_preprocessor = None
     else:
         raise ValueError("Data type must be one of ['hmnist', 'physionet', 'sprites']")
@@ -223,7 +257,7 @@ def main(argv):
                        kernel=FLAGS.kernel, sigma=FLAGS.sigma,
                        length_scale=FLAGS.length_scale, kernel_scales = FLAGS.kernel_scales,
                        image_preprocessor=image_preprocessor, window_size=FLAGS.window_size,
-                       beta=FLAGS.beta, M=FLAGS.M, K=FLAGS.K, data_type=FLAGS.data_type)
+                       beta=FLAGS.beta, M=FLAGS.M, K=FLAGS.K, data_type=FLAGS.data_type,use_mixer=FLAGS.use_mixer)
     else:
         raise ValueError("Model type must be one of ['vae', 'hi-vae', 'gp-vae']")
 
@@ -232,12 +266,24 @@ def main(argv):
     # Training preparation #
     ########################
 
-    print("GPU support: ", tf.test.is_gpu_available())
+    print("GPU support: ", tf.config.list_physical_devices('GPU'))
 
     print("Training...")
+    print("Training...",FLAGS.batch_size)
+
+    #use schedular LR
+    if FLAGS.num_steps == 0:
+        num_steps = FLAGS.num_epochs * len(x_train_miss) // FLAGS.batch_size
+    else:
+        num_steps = FLAGS.num_steps
+
+    lr = get_lr(num_steps)
+    # global_steps = len(tf_x_train_miss)*FLAGS.
+    # lr_schedule = LRSchedule(FLAGS.learning_rate, int(num_steps*FLAGS.warmup), FLAGS.lr_scheduler)
+
     _ = tf.compat.v1.train.get_or_create_global_step()
     trainable_vars = model.get_trainable_vars()
-    optimizer = tf.compat.v1.train.AdamOptimizer(learning_rate=FLAGS.learning_rate)
+    optimizer = tf.optimizers.Adam(learning_rate=lr)
 
     print("Encoder: ", model.encoder.net.summary())
     print("Decoder: ", model.decoder.net.summary())
@@ -253,10 +299,7 @@ def main(argv):
 
     summary_writer = tf.compat.v2.summary.create_file_writer(logdir=outdir, flush_millis=10000)
 
-    if FLAGS.num_steps == 0:
-        num_steps = FLAGS.num_epochs * len(x_train_miss) // FLAGS.batch_size
-    else:
-        num_steps = FLAGS.num_steps
+
 
     if FLAGS.print_interval == 0:
         FLAGS.print_interval = num_steps // FLAGS.num_epochs
@@ -271,25 +314,31 @@ def main(argv):
 
     t0 = time.time()
     with summary_writer.as_default(), tf.compat.v2.summary.record_if(True):
-        for i, (x_seq, m_seq) in enumerate(tf_x_train_miss.take(num_steps)):
+        for i, (x_seq, m_seq, x_full_seq) in enumerate(tf_x_train_miss.take(num_steps)):
             try:
                 with tf.GradientTape() as tape:
                     tape.watch(trainable_vars)
-                    loss = model.compute_loss(x_seq, m_mask=m_seq)
+                    elbo_loss, nll, kl, mse_loss = model.compute_loss(tf.cast(x_seq.reshape(-1,FLAGS.Time,data_dim),tf.float32), m_mask=tf.cast(m_seq.reshape(-1,FLAGS.Time,data_dim),tf.float32),return_parts=True)
+                    # mse_loss = model.compute_mse(tf.cast(x_seq,tf.float32),tf.cast(x_full_seq,tf.float32))
+                    # loss = elbo_loss #+ mse_loss
+                    # loss = mse_loss
+                    loss = mse_loss +(i/num_steps)*elbo_loss*int(i>5000)
                     losses_train.append(loss.numpy())
                 grads = tape.gradient(loss, trainable_vars)
                 grads = [np.nan_to_num(grad) for grad in grads]
                 grads, global_norm = tf.clip_by_global_norm(grads, FLAGS.gradient_clip)
-                optimizer.apply_gradients(zip(grads, trainable_vars),
-                                          global_step=tf.compat.v1.train.get_or_create_global_step())
-
+                # optimizer.apply_gradients(zip(grads, trainable_vars),
+                #                           global_step=tf.compat.v1.train.get_or_create_global_step())
+                optimizer.apply_gradients(zip(grads, trainable_vars))
                 # Print intermediate results
                 if i % FLAGS.print_interval == 0:
                     print("================================================")
-                    print("Learning rate: {} | Global gradient norm: {:.2f}".format(optimizer._lr, global_norm))
+                    print("Learning rate: {} | Global gradient norm: {:.2f}".format(optimizer.lr(i), global_norm))
                     print("Step {}) Time = {:2f}".format(i, time.time() - t0))
-                    loss, nll, kl = model.compute_loss(x_seq, m_mask=m_seq, return_parts=True)
-                    print("Train loss = {:.3f} | NLL = {:.3f} | KL = {:.3f}".format(loss, nll, kl))
+                    # elbo_loss, nll, kl = model.compute_loss(x_seq, m_mask=m_seq, return_parts=True)
+                    # mse_loss = model.compute_mse(tf.cast(x_seq,tf.float32),tf.cast(x_full_seq,tf.float32))
+                    print("Train loss = {:.3f} | NLL = {:.3f} | KL = {:.3f} | MSE = {:.3}".format(loss,
+                                                                                                  nll, kl, mse_loss))
 
                     saver.save(checkpoint_prefix)
                     tf.compat.v2.summary.scalar(name="loss_train", data=loss, step=tf.compat.v1.train.get_or_create_global_step())
@@ -297,10 +346,10 @@ def main(argv):
                     tf.compat.v2.summary.scalar(name="nll_train", data=nll, step=tf.compat.v1.train.get_or_create_global_step())
 
                     # Validation loss
-                    x_val_batch, m_val_batch = tf_x_val_miss.get_next()
-                    val_loss, val_nll, val_kl = model.compute_loss(x_val_batch, m_mask=m_val_batch, return_parts=True)
+                    x_val_batch, m_val_batch,x_full_val_batch = tf_x_val_miss.get_next()
+                    val_loss, val_nll, val_kl,val_mse = model.compute_loss(tf.cast(x_val_batch.reshape(-1,FLAGS.Time,data_dim),tf.float32), m_mask=tf.cast(m_val_batch.reshape(-1,FLAGS.Time,data_dim),tf.float32), return_parts=True)
                     losses_val.append(val_loss.numpy())
-                    print("Validation loss = {:.3f} | NLL = {:.3f} | KL = {:.3f}".format(val_loss, val_nll, val_kl))
+                    print("Validation loss = {:.3f} | NLL = {:.3f} | KL = {:.3f} |  MSE = {:.3f}".format(val_loss, val_nll, val_kl,val_mse))
 
                     tf.compat.v2.summary.scalar(name="loss_val", data=val_loss, step=tf.compat.v1.train.get_or_create_global_step())
                     tf.compat.v2.summary.scalar(name="kl_val", data=val_kl, step=tf.compat.v1.train.get_or_create_global_step())
@@ -396,18 +445,18 @@ def main(argv):
         print("AUROC: {:.4f}".format(auroc))
         print("AUPRC: {:.4f}".format(auprc))
 
-    elif FLAGS.data_type == "sprites":
+    elif FLAGS.data_type == "sprites" or FLAGS.data_type == "motion":
         auroc, auprc = 0, 0
+        for i in range(5):
+            z_sample = [model.encode(x_batch).sample().numpy() for x_batch in x_val_miss_batches]
+            np.save(os.path.join(outdir, "z_sample_{}".format(i)), np.vstack(z_sample))
+            x_val_imputed_sample = np.vstack([model.decode(z_batch).mean().numpy() for z_batch in z_sample])
+            np.save(os.path.join(outdir, "imputed_sample_{}_no_gt".format(i)), x_val_imputed_sample)
+            x_val_imputed_sample[m_val_miss == 0] = x_val_miss[m_val_miss == 0]
+            np.save(os.path.join(outdir, "imputed_sample_{}".format(i)), x_val_imputed_sample)
 
-    elif FLAGS.data_type == "physionet":
+    elif FLAGS.data_type == "motion" :
         # Uncomment to preserve some z_samples and their reconstructions
-        # for i in range(5):
-        #     z_sample = [model.encode(x_batch).sample().numpy() for x_batch in x_val_miss_batches]
-        #     np.save(os.path.join(outdir, "z_sample_{}".format(i)), np.vstack(z_sample))
-        #     x_val_imputed_sample = np.vstack([model.decode(z_batch).mean().numpy() for z_batch in z_sample])
-        #     np.save(os.path.join(outdir, "imputed_sample_{}_no_gt".format(i)), x_val_imputed_sample)
-        #     x_val_imputed_sample[m_val_miss == 0] = x_val_miss[m_val_miss == 0]
-        #     np.save(os.path.join(outdir, "imputed_sample_{}".format(i)), x_val_imputed_sample)
 
         # AUROC evaluation using Logistic Regression
         x_val_imputed = x_val_imputed.reshape([-1, time_length * data_dim])
