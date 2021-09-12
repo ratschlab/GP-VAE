@@ -3,7 +3,7 @@ import tensorflow as tf
 # as in the ULMFIT paper. scheduler code from:
 # https://hwiyong.tistory.com/421
 
-def get_lr(g_step, warmup_step=5000, init_lr=1e-2, min_lr=1e-4, power=1.):
+def get_lr(g_step, warmup_step=5000, init_lr=1e-1, min_lr=1e-5, power=1.):
     lr_scheduler = tf.keras.optimizers.schedules.PolynomialDecay(
         initial_learning_rate=init_lr,
         decay_steps=g_step - warmup_step,

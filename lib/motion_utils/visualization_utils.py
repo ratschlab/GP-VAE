@@ -70,8 +70,6 @@ def fast_draw_stickfigure3d(skeleton, frame, data, joints=None, ax=None, figsize
 
 
 def plot_animation(joints, data, x,idx=None, title="title",set_lims = False,frames=180,dir_to_save="animations\\styleGan_anim", r = 20,is_centered=False,down_sample=1):
-    from matplotlib import animation
-    # FFwriter = animation.FFMpegFileWriter()
     if not os.path.isdir(dir_to_save):
         os.makedirs(dir_to_save,exist_ok=True)
 
@@ -92,9 +90,6 @@ def plot_animation(joints, data, x,idx=None, title="title",set_lims = False,fram
             l[0].set_data_3d(x, z, y)
         return lines,
 
-    # smpl, _ = next(iter(train_dataloader))
-    # if idx is None:
-        # idx = torch.randint(high=x.shape[0], size=(1,))
     smpl = x[0]
     for i in range(1):
         fig = plt.figure(figsize=(8, 8))
@@ -105,24 +100,15 @@ def plot_animation(joints, data, x,idx=None, title="title",set_lims = False,fram
             ax.set_xlim3d(-r * 0.55, r * 0.55)
             ax.set_ylim3d(-r * 0.55, r * 0.55)
             ax.set_zlim3d(0, 1.1 * r)
-        # set_lims = False
-        # set_lims = True
 
-        # autoencoder = autoencoder.cuda()
-
-        # fake_img = autoencoder.decoder(real_lat.unsqueeze(1))
-        # real_img = x.cpu()
-        # real_img = recon.cpu()
-        # fake_img= fake_img.to('cpu')
-        # print(fake.shape)
         cols = data.values.columns[3:] if is_centered else data.values.columns
         df = pd.DataFrame(smpl, columns=cols)
         skel = {k:v for k,v in data.skeleton.items() if k not in joints[0]} if is_centered else data.skeleton
-        # df = pd.DataFrame(fake_img[i].squeeze(0).detach().numpy(),columns=data.data_pos[0].values.columns)
         ax, skel_lines, lines = fast_draw_stickfigure3d(skel, 0, data=df, joints=joints[1:], ax=ax,
                                                         set_lims=set_lims)
 
         anim2 = FuncAnimation(fig, animate, init_func=init,
                               frames=frames, interval=11.111*down_sample)
-        # runners / animations / styleGan_anim
+
+
         anim2.save(f'{dir_to_save}\\anim_{title}.mp4')

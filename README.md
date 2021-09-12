@@ -1,3 +1,20 @@
+this forked repo was used for advanced ML course at the Reichman university (idc Herzliya) fall 2021
+submitted by:
+Alon Shoa & Tamir Caspi.
+
+in this work we added suport for training motion capture with a mixer-mlp as a preprocess step instead of convolutions.
+
+to run this on motion with the mixer model there is a flag --use_mixer.
+
+to use: you can run 
+
+`train.py --model_type gp-vae --data_type motion --exp_name *exp_name* --seed 42 --testing --latent_dim 128 --encoder_sizes=512,256,128,128 --decoder_sizes=128,256,256 --window_size 24 --sigma 1 --length_scale 16 --beta 0.1 --num_epochs 4000 --batch_size 256 --cnn_sizes=64,64,64 --learning_rate 0.01 --Time 16 --M 1 --K 1 --print_interval 150 --use_mixer --banded_covar `
+
+to use the these extended features, there are 2 requirements that needs to be added.
+
+`pip install nd-mixer-mlp`<br>
+`pip install git+https://github.com/omimo/PyMO.git`
+
 # GP-VAE: Deep Probabilistic Time Series Imputation
 
 Code for [paper](http://arxiv.org/abs/1907.04155)

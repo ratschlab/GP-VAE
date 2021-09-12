@@ -1,6 +1,6 @@
 import tensorflow as tf
-from tensorflow.keras.models import Model
 from tensorflow.keras.layers import Input, Dense, Layer, LayerNormalization
+
 
 class MLP(Layer):
     def __init__(self, hdim=512, out_dim=256):
@@ -16,9 +16,9 @@ class MLP(Layer):
         return x
 
 class MixerLayer(Layer):
-    def __init__(self, hdim=128, image_size=[330,8], n_channels=8):
+    def __init__(self, hdim=128, image_size=(330,8), n_channels=8):
         super().__init__()
-
+        self.image_size = image_size
         self.inp = Input(shape=[n_channels, image_size[0], image_size[1]])
         self.MLP1 = MLP(hdim, out_dim=image_size[0])
         self.MLP2 = MLP(hdim, out_dim=image_size[1])
@@ -37,10 +37,3 @@ class MixerLayer(Layer):
         return out_2
 
 
-if __name__ == '__main__':
-    x = tf.random.normal((8,330,8))
-
-    model = MixerLayer(hdim=128, image_size=[330,8], n_channels=8)
-    # ll =
-    y = model(x)
-    print(y.shape)

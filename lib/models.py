@@ -3,7 +3,6 @@
 TensorFlow models for use in this project.
 
 """
-
 from .utils import *
 from .nn_utils import *
 from .gp_kernel import *
@@ -24,7 +23,7 @@ class DiagonalEncoder(tf.keras.Model):
         super(DiagonalEncoder, self).__init__()
         self.z_size = int(z_size)
         if use_mixer:
-            self.net = make_mixer_nn(2*z_size, hidden_sizes)
+            self.net = make_mixer_nn2(2*z_size, hidden_sizes)
         else:
             self.net = make_nn(2 * z_size, hidden_sizes)
 
@@ -36,7 +35,7 @@ class DiagonalEncoder(tf.keras.Model):
 
 
 class JointEncoder(tf.keras.Model):
-    def __init__(self, z_size, hidden_sizes=(64, 64), window_size=3, transpose=False, **kwargs):
+    def __init__(self, z_size, hidden_sizes=(64, 64), window_size=3, transpose=False, use_mixer=False, **kwargs):
         """ Encoder with 1d-convolutional network and factorized Normal posterior
             Used by joint VAE and HI-VAE with Standard Normal prior or GP-VAE with factorized Normal posterior
             :param z_size: latent space dimensionality
@@ -47,7 +46,10 @@ class JointEncoder(tf.keras.Model):
         """
         super(JointEncoder, self).__init__()
         self.z_size = int(z_size)
-        self.net = make_cnn(2*z_size, hidden_sizes, window_size)
+        if use_mixer:
+            self.net = make_mixer_nn2(2*z_size, hidden_sizes,4)
+        else:
+            self.net = make_cnn(2*z_size, hidden_sizes, window_size)
         self.transpose = transpose
 
     def __call__(self, x):
@@ -79,7 +81,7 @@ class BandedJointEncoder(tf.keras.Model):
         super(BandedJointEncoder, self).__init__()
         self.z_size = int(z_size)
         if use_mixer:
-            self.net = make_mixer_nn(3 * z_size, hidden_sizes)
+            self.net = make_mixer_nn2(hidden_sizes,4,out_shape=(3 * z_size,))
         else:
             self.net = make_cnn(3*z_size, hidden_sizes, window_size)
 
@@ -87,7 +89,8 @@ class BandedJointEncoder(tf.keras.Model):
 
     def __call__(self, x):
 
-        mapped = self.net(tf.keras.utils.normalize(x))
+        normalize = tf.keras.utils.normalize(x)
+        mapped = self.net(normalize)
 
         batch_size = mapped.shape.as_list()[0]
         time_length = mapped.shape.as_list()[1]
@@ -100,7 +103,7 @@ class BandedJointEncoder(tf.keras.Model):
         mapped_covar = mapped_transposed[:, self.z_size:]
 
         # tf.nn.sigmoid provides more stable performance on Physionet dataset
-        if self.data_type == 'physionet':
+        if self.data_type in ['physionet']:
             mapped_covar = tf.nn.sigmoid(mapped_covar)
         else:
             mapped_covar = tf.nn.softplus(mapped_covar)
@@ -136,7 +139,7 @@ class BandedJointEncoder(tf.keras.Model):
 # Decoders
 
 class Decoder(tf.keras.Model):
-    def __init__(self, output_size, hidden_sizes=(64, 64),use_mixer=False):
+    def __init__(self, output_size, hidden_sizes=(64, 64), use_mixer=False, image_size=(110, 3)):
         """ Decoder parent class with no specified output distribution
             :param output_size: output dimensionality
             :param hidden_sizes: tuple of hidden layer sizes.
@@ -144,7 +147,7 @@ class Decoder(tf.keras.Model):
         """
         super(Decoder, self).__init__()
         if use_mixer:
-            self.net = make_mixer_nn(output_size, hidden_sizes)
+            self.net = make_mixer_nn2( (16,128),4,out_shape=[image_size[0]*16,3])
         else:
             self.net = make_nn(output_size, hidden_sizes)
 
@@ -160,8 +163,12 @@ class BernoulliDecoder(Decoder):
 
 
 class GaussianDecoder(Decoder):
+    def __init__(self,*args,**kwargs):
+        super(GaussianDecoder, self).__init__(*args,**kwargs)
+        self.count=0
     """ Decoder with Gaussian output distribution (used for SPRITES and Physionet) """
     def __call__(self, x):
+        self.count += 1
         mean = self.net(x)
         var = tf.ones(tf.shape(input=mean), dtype=tf.float32)
         return tfd.Normal(loc=mean, scale=var)
@@ -184,6 +191,16 @@ class ImagePreprocessor(tf.keras.Model):
     def __call__(self, x):
         return self.net(x)
 
+class MotionPreprocessor(tf.keras.Model):
+    def __init__(self, motion_shape, hidden_sizes=None, kernel_size=3.):
+        """ motion capture preprocess
+        """
+        super(MotionPreprocessor, self).__init__()
+        self.image_shape = motion_shape
+        self.net = make_mixer_nn2( motion_shape, kernel_size)
+
+    def __call__(self, x):
+        return self.net(x)
 
 # VAE models
 
@@ -288,14 +305,14 @@ class VAE(tf.keras.Model):
             m_mask = tf.cast(m_mask, tf.bool)
 
         pz = self._get_prior()
-        qz_x = self.encode(tf.reshape(x,(8,330,8)))
+        qz_x = self.encode(x)
         z = qz_x.sample()
         px_z = self.decode(z)
 
         x_hat = px_z.sample()
-        mse_loss = tf.keras.metrics.mean_squared_error(x,x_hat)
-        # print(px_z)
-        mse_loss = tf.reduce_sum(input_tensor=mse_loss)
+
+        mse_loss = tf.math.squared_difference(x_hat, x)
+        mse_loss = tf.reduce_sum(input_tensor=mse_loss.mean(axis=[0,1]))
 
         nll = -px_z.log_prob(x)  # shape=(M*K*BS, TL, D)
 
@@ -322,8 +339,7 @@ class VAE(tf.keras.Model):
             kl = tf.compat.v1.where(tf.math.is_finite(kl), kl, tf.zeros_like(kl))
             kl = tf.reduce_sum(input_tensor=kl, axis=1)  # shape=(M*K*BS)
 
-            elbo = -nll - self.beta * kl #-mse_loss # shape=(M*K*BS) K=1
-            # print("MSE_loss= ",mse_loss)
+            elbo = -nll - self.beta * kl - self.beta * mse_loss # shape=(M*K*BS) K=1
             elbo = tf.reduce_mean(input_tensor=elbo)  # scalar
 
         if return_parts:
@@ -341,8 +357,8 @@ class VAE(tf.keras.Model):
         return tfd.kl_divergence(a, b)
 
     def get_trainable_vars(self):
-        self.compute_loss(tf.random.normal(shape=(8, self.time_length, self.data_dim), dtype=tf.float32),
-                          tf.zeros(shape=(8, self.time_length, self.data_dim), dtype=tf.float32))
+        self.compute_loss(tf.random.normal(shape=(1, self.time_length, self.data_dim), dtype=tf.float32),
+                          tf.zeros(shape=(1, self.time_length, self.data_dim), dtype=tf.float32))
         return self.trainable_variables
 
 
@@ -457,3 +473,4 @@ class GP_VAE(HI_VAE):
                       squared_frobenius_norm(b_inv_a) + squared_frobenius_norm(
                       b.scale.solve((b.mean() - a.mean())[..., tf.newaxis]))))
         return kl_div
+
