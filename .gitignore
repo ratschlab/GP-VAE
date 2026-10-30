@@ -119,3 +119,5 @@ events.out.tfevents*
 __pycache__/
 *.pyc
 !models/261024_reproduce_hmnist_full_run/
+!models/261030_reproduce_physionet/
+!models/261030_reproduce_sprites/
