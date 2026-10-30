@@ -118,3 +118,4 @@ stored_models/
 events.out.tfevents*
 __pycache__/
 *.pyc
+!models/261024_reproduce_hmnist_full_run/
