@@ -30,7 +30,7 @@ def get_rotations(img, rotation_steps):
 
 
 def binarize(img):
-    return (img > 127).astype(np.int)
+    return (img > 127).astype(int)
 
 
 def heal_image(img, seq_len, square_count, square_size, noise_ratio, max_angle):

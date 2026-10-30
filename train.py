@@ -13,8 +13,7 @@ import matplotlib
 matplotlib.use("Agg")
 from matplotlib import pyplot as plt
 import tensorflow as tf
-
-tf.compat.v1.enable_eager_execution()
+import tf_keras
 
 from sklearn.metrics import average_precision_score, roc_auc_score
 from sklearn.linear_model import LogisticRegression
@@ -88,7 +87,7 @@ flags.DEFINE_integer('kernel_scales', 1, 'Number of different length scales sigm
 def main(argv):
     del argv  # unused
     np.random.seed(FLAGS.seed)
-    tf.compat.v1.set_random_seed(FLAGS.seed)
+    tf.random.set_seed(FLAGS.seed)
 
     print("Testing: ", FLAGS.testing, f"\t Seed: {FLAGS.seed}")
 
@@ -145,13 +144,17 @@ def main(argv):
     # Load data #
     #############
 
+
     data = np.load(FLAGS.data_dir)
+
+    ## TRAINING
     x_train_full = data['x_train_full']
     x_train_miss = data['x_train_miss']
     m_train_miss = data['m_train_miss']
     if FLAGS.data_type in ['hmnist', 'physionet']:
         y_train = data['y_train']
 
+    ## TESTING
     if FLAGS.testing:
         if FLAGS.data_type in ['hmnist', 'sprites']:
             x_val_full = data['x_test_full']
@@ -159,35 +162,52 @@ def main(argv):
             m_val_miss = data['m_test_miss']
         if FLAGS.data_type == 'hmnist':
             y_val = data['y_test']
+
+        # original gitrepo uses the train data as validation 
+        #elif FLAGS.data_type == 'physionet':
+        #    x_val_full = data['x_train_full']
+        #    x_val_miss = data['x_train_miss']
+        #    m_val_miss = data['m_train_miss']
+        #    y_val = data['y_train']
+        #    m_val_artificial = data["m_train_artificial"]
+
+        # changed to the available test dataset
         elif FLAGS.data_type == 'physionet':
-            x_val_full = data['x_train_full']
-            x_val_miss = data['x_train_miss']
-            m_val_miss = data['m_train_miss']
-            y_val = data['y_train']
-            m_val_artificial = data["m_train_artificial"]
+                    x_val_full = data['x_test_full']
+                    x_val_miss = data['x_test_miss']
+                    m_val_miss = data['m_test_miss']
+                    y_val = data['y_test']
+                    m_val_artificial = data["m_test_artificial"]
+
+    ## VALIDATION
+    # hmnist and sprites only have train and test -> validation dataset from training set
     elif FLAGS.data_type in ['hmnist', 'sprites']:
         x_val_full = x_train_full[val_split:]
         x_val_miss = x_train_miss[val_split:]
         m_val_miss = m_train_miss[val_split:]
         if FLAGS.data_type == 'hmnist':
             y_val = y_train[val_split:]
+
+        # TRAINING (hmnist & sprites)
         x_train_full = x_train_full[:val_split]
         x_train_miss = x_train_miss[:val_split]
         m_train_miss = m_train_miss[:val_split]
         y_train = y_train[:val_split]
+
     elif FLAGS.data_type == 'physionet':
         x_val_full = data["x_val_full"]  # full for artificial missings
         x_val_miss = data["x_val_miss"]
         m_val_miss = data["m_val_miss"]
         m_val_artificial = data["m_val_artificial"]
         y_val = data["y_val"]
+
     else:
         raise ValueError("Data type must be one of ['hmnist', 'physionet', 'sprites']")
 
     tf_x_train_miss = tf.data.Dataset.from_tensor_slices((x_train_miss, m_train_miss))\
                                      .shuffle(len(x_train_miss)).batch(FLAGS.batch_size).repeat()
     tf_x_val_miss = tf.data.Dataset.from_tensor_slices((x_val_miss, m_val_miss)).batch(FLAGS.batch_size).repeat()
-    tf_x_val_miss = tf.compat.v1.data.make_one_shot_iterator(tf_x_val_miss)
+    tf_x_val_miss = iter(tf_x_val_miss)
 
     # Build Conv2D preprocessor for image data
     if FLAGS.data_type in ['hmnist', 'sprites']:
@@ -232,26 +252,24 @@ def main(argv):
     # Training preparation #
     ########################
 
-    print("GPU support: ", tf.test.is_gpu_available())
+    print("GPU support: ", tf.config.list_physical_devices('GPU'))
 
     print("Training...")
-    _ = tf.compat.v1.train.get_or_create_global_step()
+    #_ = tf.compat.v1.train.get_or_create_global_step() - not needed in tf2
     trainable_vars = model.get_trainable_vars()
-    optimizer = tf.compat.v1.train.AdamOptimizer(learning_rate=FLAGS.learning_rate)
+    optimizer = tf_keras.optimizers.Adam(learning_rate=FLAGS.learning_rate)
 
     print("Encoder: ", model.encoder.net.summary())
     print("Decoder: ", model.decoder.net.summary())
 
     if model.preprocessor is not None:
         print("Preprocessor: ", model.preprocessor.net.summary())
-        saver = tf.compat.v1.train.Checkpoint(optimizer=optimizer, encoder=model.encoder.net,
-                                              decoder=model.decoder.net, preprocessor=model.preprocessor.net,
-                                              optimizer_step=tf.compat.v1.train.get_or_create_global_step())
+        saver = tf.train.Checkpoint(optimizer=optimizer, encoder=model.encoder.net,
+                                              decoder=model.decoder.net, preprocessor=model.preprocessor.net)
     else:
-        saver = tf.compat.v1.train.Checkpoint(optimizer=optimizer, encoder=model.encoder.net, decoder=model.decoder.net,
-                                              optimizer_step=tf.compat.v1.train.get_or_create_global_step())
+        saver = tf.train.Checkpoint(optimizer=optimizer, encoder=model.encoder.net, decoder=model.decoder.net)
 
-    summary_writer = tf.contrib.summary.create_file_writer(outdir, flush_millis=10000)
+    summary_writer = tf.summary.create_file_writer(logdir=outdir, flush_millis=10000)
 
     if FLAGS.num_steps == 0:
         num_steps = FLAGS.num_epochs * len(x_train_miss) // FLAGS.batch_size
@@ -270,7 +288,7 @@ def main(argv):
     losses_val = []
 
     t0 = time.time()
-    with summary_writer.as_default(), tf.contrib.summary.always_record_summaries():
+    with summary_writer.as_default(), tf.summary.record_if(True):
         for i, (x_seq, m_seq) in enumerate(tf_x_train_miss.take(num_steps)):
             try:
                 with tf.GradientTape() as tape:
@@ -280,37 +298,36 @@ def main(argv):
                 grads = tape.gradient(loss, trainable_vars)
                 grads = [np.nan_to_num(grad) for grad in grads]
                 grads, global_norm = tf.clip_by_global_norm(grads, FLAGS.gradient_clip)
-                optimizer.apply_gradients(zip(grads, trainable_vars),
-                                          global_step=tf.compat.v1.train.get_or_create_global_step())
+                optimizer.apply_gradients(zip(grads, trainable_vars))
 
                 # Print intermediate results
                 if i % FLAGS.print_interval == 0:
                     print("================================================")
-                    print("Learning rate: {} | Global gradient norm: {:.2f}".format(optimizer._lr, global_norm))
+                    print("Learning rate: {} | Global gradient norm: {:.2f}".format(optimizer.learning_rate, global_norm))
                     print("Step {}) Time = {:2f}".format(i, time.time() - t0))
                     loss, nll, kl = model.compute_loss(x_seq, m_mask=m_seq, return_parts=True)
                     print("Train loss = {:.3f} | NLL = {:.3f} | KL = {:.3f}".format(loss, nll, kl))
 
                     saver.save(checkpoint_prefix)
-                    tf.contrib.summary.scalar("loss_train", loss)
-                    tf.contrib.summary.scalar("kl_train", kl)
-                    tf.contrib.summary.scalar("nll_train", nll)
+                    tf.summary.scalar(name="loss_train", data=loss, step=i)
+                    tf.summary.scalar(name="kl_train", data=kl, step=i)
+                    tf.summary.scalar(name="nll_train", data=nll, step=i)
 
                     # Validation loss
-                    x_val_batch, m_val_batch = tf_x_val_miss.get_next()
+                    x_val_batch, m_val_batch = next(tf_x_val_miss)
                     val_loss, val_nll, val_kl = model.compute_loss(x_val_batch, m_mask=m_val_batch, return_parts=True)
                     losses_val.append(val_loss.numpy())
                     print("Validation loss = {:.3f} | NLL = {:.3f} | KL = {:.3f}".format(val_loss, val_nll, val_kl))
 
-                    tf.contrib.summary.scalar("loss_val", val_loss)
-                    tf.contrib.summary.scalar("kl_val", val_kl)
-                    tf.contrib.summary.scalar("nll_val", val_nll)
+                    tf.summary.scalar(name="loss_val", data=val_loss, step=i)
+                    tf.summary.scalar(name="kl_val", data=val_kl, step=i)
+                    tf.summary.scalar(name="nll_val", data=val_nll, step=i)
 
                     if FLAGS.data_type in ["hmnist", "sprites"]:
                         # Draw reconstructed images
                         x_hat = model.decode(model.encode(x_seq).sample()).mean()
-                        tf.contrib.summary.image("input_train", tf.reshape(x_seq, [-1]+list(img_shape)))
-                        tf.contrib.summary.image("reconstruction_train", tf.reshape(x_hat, [-1]+list(img_shape)))
+                        tf.summary.image(name="input_train", data=tf.reshape(x_seq, [-1]+list(img_shape)), step=i)
+                        tf.summary.image(name="reconstruction_train", data=tf.reshape(x_hat, [-1]+list(img_shape)), step=i)
                     elif FLAGS.data_type == 'physionet':
                         # Eval MSE and AUROC on entire val set
                         x_val_miss_batches = np.array_split(x_val_miss, FLAGS.batch_size, axis=0)
@@ -336,7 +353,7 @@ def main(argv):
 
                         # Update learning rate (used only for physionet with decay=0.5)
                         if i > 0 and i % (10*FLAGS.print_interval) == 0:
-                            optimizer._lr = max(0.5 * optimizer._lr, 0.1 * FLAGS.learning_rate)
+                            optimizer.learning_rate = max(0.5 * optimizer.learning_rate, 0.1 * FLAGS.learning_rate)
                     t0 = time.time()
             except KeyboardInterrupt:
                 saver.save(checkpoint_prefix)
@@ -385,7 +402,8 @@ def main(argv):
         x_val_imputed = np.round(x_val_imputed)
         x_val_imputed = x_val_imputed.reshape([-1, time_length * data_dim])
 
-        cls_model = LogisticRegression(solver='lbfgs', multi_class='multinomial', tol=1e-10, max_iter=10000)
+        #cls_model = LogisticRegression(solver='lbfgs', multi_class='multinomial', tol=1e-10, max_iter=10000)
+        cls_model = LogisticRegression(solver='lbfgs', tol=1e-10, max_iter=10000)
         val_split = len(x_val_imputed) // 2
 
         cls_model.fit(x_val_imputed[:val_split], y_val[:val_split])

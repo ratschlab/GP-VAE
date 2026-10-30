@@ -1,5 +1,6 @@
 import tensorflow as tf
 import numpy as np
+from tensorflow_probability import distributions as tfd
 
 
 ''' TF utils '''
@@ -17,7 +18,7 @@ def reduce_logmeanexp(x, axis, eps=1e-5):
         log_mean_exp: A `Tensor` representing `log(Avg{exp(x): x})`.
     """
     x_max = tf.reduce_max(x, axis=axis, keepdims=True)
-    return tf.log(tf.reduce_mean(
+    return tf.math.log(tf.reduce_mean(
             tf.exp(x - x_max), axis=axis, keepdims=True) + eps) + x_max
 
 

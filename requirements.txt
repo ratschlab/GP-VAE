@@ -6,3 +6,16 @@ tensorflow-gpu==1.15.0
 tensorflow_probability==0.7.0
 matplotlib
 scikit-learn
+
+
+## WITH TENSORFLOW=2.21; PYTHON=3.11
+absl-py==2.5.1
+numpy==2.4.6
+scipy==1.17.1
+tensorflow==2.21.0
+tensorflow_probability==0.25.0
+'tensorflow[and-cuda]'
+tf_keras==2.21
+matplotlib==3.11.2
+scikit-learn==1.9.1
+

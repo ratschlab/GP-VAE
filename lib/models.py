@@ -9,11 +9,12 @@ from .nn_utils import *
 from .gp_kernel import *
 from tensorflow_probability import distributions as tfd
 import tensorflow as tf
+import numpy as np
 
 
 # Encoders
 
-class DiagonalEncoder(tf.keras.Model):
+class DiagonalEncoder(tf_keras.Model):
     def __init__(self, z_size, hidden_sizes=(64, 64), **kwargs):
         """ Encoder with factorized Normal posterior over temporal dimension
             Used by disjoint VAE and HI-VAE with Standard Normal prior
@@ -32,7 +33,7 @@ class DiagonalEncoder(tf.keras.Model):
           scale_diag=tf.nn.softplus(mapped[..., self.z_size:]))
 
 
-class JointEncoder(tf.keras.Model):
+class JointEncoder(tf_keras.Model):
     def __init__(self, z_size, hidden_sizes=(64, 64), window_size=3, transpose=False, **kwargs):
         """ Encoder with 1d-convolutional network and factorized Normal posterior
             Used by joint VAE and HI-VAE with Standard Normal prior or GP-VAE with factorized Normal posterior
@@ -61,7 +62,7 @@ class JointEncoder(tf.keras.Model):
                     scale_diag=tf.nn.softplus(mapped[..., self.z_size:]))
 
 
-class BandedJointEncoder(tf.keras.Model):
+class BandedJointEncoder(tf_keras.Model):
     def __init__(self, z_size, hidden_sizes=(64, 64), window_size=3, data_type=None, **kwargs):
         """ Encoder with 1d-convolutional network and multivariate Normal posterior
             Used by GP-VAE with proposed banded covariance matrix
@@ -112,7 +113,7 @@ class BandedJointEncoder(tf.keras.Model):
             mapped_values = tf.reshape(mapped_reshaped[:, :, :-1], [-1])
             prec_sparse = tf.sparse.SparseTensor(indices=idxs_all, values=mapped_values, dense_shape=dense_shape)
             prec_sparse = tf.sparse.reorder(prec_sparse)
-            prec_tril = tf.sparse_add(tf.zeros(prec_sparse.dense_shape, dtype=tf.float32), prec_sparse)
+            prec_tril = tf.sparse.add(tf.zeros(prec_sparse.dense_shape, dtype=tf.float32), prec_sparse)
             eye = tf.eye(num_rows=prec_tril.shape.as_list()[-1], batch_shape=prec_tril.shape.as_list()[:-2])
             prec_tril = prec_tril + eye
             cov_tril = tf.linalg.triangular_solve(matrix=prec_tril, rhs=eye, lower=False)
@@ -127,7 +128,7 @@ class BandedJointEncoder(tf.keras.Model):
 
 # Decoders
 
-class Decoder(tf.keras.Model):
+class Decoder(tf_keras.Model):
     def __init__(self, output_size, hidden_sizes=(64, 64)):
         """ Decoder parent class with no specified output distribution
             :param output_size: output dimensionality
@@ -158,7 +159,7 @@ class GaussianDecoder(Decoder):
 
 # Image preprocessor
 
-class ImagePreprocessor(tf.keras.Model):
+class ImagePreprocessor(tf_keras.Model):
     def __init__(self, image_shape, hidden_sizes=(256, ), kernel_size=3.):
         """ Decoder parent class without specified output distribution
             :param image_shape: input image size
@@ -176,7 +177,7 @@ class ImagePreprocessor(tf.keras.Model):
 
 # VAE models
 
-class VAE(tf.keras.Model):
+class VAE(tf_keras.Model):
     def __init__(self, latent_dim, data_dim, time_length,
                  encoder_sizes=(64, 64), encoder=DiagonalEncoder,
                  decoder_sizes=(64, 64), decoder=BernoulliDecoder,
@@ -228,7 +229,7 @@ class VAE(tf.keras.Model):
 
     def generate(self, noise=None, num_samples=1):
         if noise is None:
-            noise = tf.random_normal(shape=(num_samples, self.latent_dim))
+            noise = tf.random.normal(shape=(num_samples, self.latent_dim))
         return self.decode(noise)
     
     def _get_prior(self):
@@ -289,7 +290,7 @@ class VAE(tf.keras.Model):
 
         if self.K > 1:
             kl = qz_x.log_prob(z) - pz.log_prob(z)  # shape=(M*K*BS, TL or d)
-            kl = tf.where(tf.is_finite(kl), kl, tf.zeros_like(kl))
+            kl = tf.where(tf.math.is_finite(kl), kl, tf.zeros_like(kl))
             kl = tf.reduce_sum(kl, 1)  # shape=(M*K*BS)
 
             weights = -nll - kl  # shape=(M*K*BS)
@@ -384,12 +385,13 @@ class GP_VAE(HI_VAE):
                     multiplier = int(np.ceil(self.latent_dim / self.kernel_scales))
                     total += multiplier
                 tiled_matrices.append(tf.tile(tf.expand_dims(kernel_matrices[i], 0), [multiplier, 1, 1]))
-            kernel_matrix_tiled = np.concatenate(tiled_matrices)
+            kernel_matrix_tiled = tf.concat(tiled_matrices, axis=0)
             assert len(kernel_matrix_tiled) == self.latent_dim
 
-            self.prior = tfd.MultivariateNormalFullCovariance(
+            # depatched??
+            self.prior = tfd.MultivariateNormalTriL(
                 loc=tf.zeros([self.latent_dim, self.time_length], dtype=tf.float32),
-                covariance_matrix=kernel_matrix_tiled)
+                scale_tril=tf.linalg.cholesky(kernel_matrix_tiled))
         return self.prior
 
     def kl_divergence(self, a, b):

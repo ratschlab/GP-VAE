@@ -101,3 +101,23 @@ venv.bak/
 
 # mypy
 .mypy_cache/
+
+# downloaded data
+data/*.npz
+data/*.npy
+data/*.csv
+data/*.tar.gz
+data/hmnist/
+data/sprites/
+data/physionet/
+
+# training outputs
+models/
+stored_models/
+*.ckpt*
+events.out.tfevents*
+__pycache__/
+*.pyc
+!models/261024_reproduce_hmnist_full_run/
+!models/261030_reproduce_physionet/
+!models/261030_reproduce_sprites/
